@@ -1,0 +1,14 @@
+[Unit]
+Description=Cloudflare DDNS for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/ddns/%i.rc
+ExecStart=/usr/local/bin/ddns
+KillMode=control-group
+Restart=on-failure
+Type=exec
+
+[Install]
+Alias=ddns@%i.service
