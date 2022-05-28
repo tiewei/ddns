@@ -12,3 +12,4 @@ Type=exec
 
 [Install]
 Alias=ddns@%i.service
+WantedBy=multi-user.target
