@@ -1,4 +1,4 @@
-module github.com/tiewei/goplate/ddns
+module github.com/tiewei/gopack/ddns
 
 go 1.18
 
