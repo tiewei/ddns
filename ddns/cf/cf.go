@@ -25,7 +25,7 @@ const Record_CNAME RecordType = "CNAME"
 type DDNS struct {
 	http     *http.Client
 	cf       *cloudflare.API
-	zoneID   string
+	zoneID   *cloudflare.ResourceContainer
 	recordID string
 }
 
@@ -50,8 +50,8 @@ func (d *DDNS) verifyToken() error {
 }
 
 func (d *DDNS) findZoneID(ctx context.Context, zone string) (string, error) {
-	if len(d.zoneID) > 0 {
-		return d.zoneID, nil
+	if d.zoneID != nil {
+		return d.zoneID.Identifier, nil
 	}
 	zones, err := d.cf.ListZones(ctx, zone)
 	if err != nil {
@@ -60,8 +60,9 @@ func (d *DDNS) findZoneID(ctx context.Context, zone string) (string, error) {
 	if len(zones) != 1 {
 		return "", fmt.Errorf("can't find exact zone with name %s, found %d", zone, len(zone))
 	}
-	d.zoneID = zones[0].ID
-	return d.zoneID, nil
+
+	d.zoneID = cloudflare.ZoneIdentifier(zones[0].ID)
+	return d.zoneID.Identifier, nil
 }
 
 func (d *DDNS) httpDo(req *http.Request) ([]byte, error) {
@@ -93,11 +94,12 @@ func (d *DDNS) myIP(ctx context.Context) (string, error) {
 }
 
 func (d *DDNS) findRecord(ctx context.Context, name string, recordType RecordType) (cloudflare.DNSRecord, error) {
+
 	if len(d.recordID) > 0 {
-		return d.cf.DNSRecord(ctx, d.zoneID, d.recordID)
+		return d.cf.GetDNSRecord(ctx, d.zoneID, d.recordID)
 	}
 
-	records, err := d.cf.DNSRecords(ctx, d.zoneID, cloudflare.DNSRecord{
+	records, _, err := d.cf.ListDNSRecords(ctx, d.zoneID, cloudflare.ListDNSRecordsParams{
 		Name: name,
 		Type: string(recordType),
 	})
@@ -114,15 +116,6 @@ func (d *DDNS) findRecord(ctx context.Context, name string, recordType RecordTyp
 	return records[0], nil
 }
 
-func (d *DDNS) createDNSRecord(ctx context.Context, rr cloudflare.DNSRecord) error {
-	rcd, err := d.cf.CreateDNSRecord(ctx, d.zoneID, rr)
-	if err != nil {
-		return err
-	}
-	d.recordID = rcd.Result.ID
-	return nil
-}
-
 func (d *DDNS) Reconcile(ctx context.Context, domain string, zone string, proxied bool) error {
 	ip, err := d.myIP(ctx)
 	if err != nil {
@@ -133,26 +126,44 @@ func (d *DDNS) Reconcile(ctx context.Context, domain string, zone string, proxie
 		return err
 	}
 
-	rrd, err := d.findRecord(ctx, domain, Record_A)
+	record, err := d.findRecord(ctx, domain, Record_A)
 	if err != nil {
 		return err
 	}
 
-	rr := cloudflare.DNSRecord{
-		Name:    domain,
-		ZoneID:  zoneID,
-		Type:    string(Record_A),
-		Content: ip,
-		Proxied: &proxied,
-		TTL:     1,
+	var dns cloudflare.DNSRecord
+	if record.ID == "" {
+		log.Printf("Creating new dns record: %s=%s\n", domain, ip)
+
+		dns, err = d.cf.CreateDNSRecord(ctx, d.zoneID, cloudflare.CreateDNSRecordParams{
+			Name:    domain,
+			ZoneID:  zoneID,
+			Type:    string(Record_A),
+			Content: ip,
+			Proxied: &proxied,
+			// Setting to 1 means 'automatic'
+			TTL: 1,
+		})
+
+		if err != nil {
+			return err
+		}
+
+		d.recordID = dns.ID
+
+		return nil
 	}
-	if rrd.ID == "" {
-		log.Printf("Creating new dns record: %s=%s\n", rr.Name, rr.Content)
-		return d.createDNSRecord(ctx, rr)
-	}
-	if rrd.Content != ip {
-		log.Printf("Updating new dns record: %s=%s\n", rr.Name, rr.Content)
-		return d.cf.UpdateDNSRecord(ctx, d.zoneID, rrd.ID, rr)
+	if record.Content != ip {
+		log.Printf("Updating new dns record: %s=%s\n", domain, ip)
+		_, err = d.cf.UpdateDNSRecord(ctx, d.zoneID, cloudflare.UpdateDNSRecordParams{
+			ID:      d.recordID,
+			Name:    domain,
+			Type:    string(Record_A),
+			Content: ip,
+			Proxied: &proxied,
+			// Setting to 1 means 'automatic'
+			TTL: 1,
+		})
 	}
 	return nil
 }
