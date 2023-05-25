@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	cfddns "github.com/tiewei/gopack/ddns/cf"
+	cfddns "github.com/tiewei/ddns/cf"
 )
 
 const (
